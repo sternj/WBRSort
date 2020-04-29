@@ -90,6 +90,9 @@ impl FileLister {
                 .file_name()
                 .expect("file name should not end with .."),
         );
+        self.lock_acq.remove(&file_to_move);
+        self.security.remove(&file_to_move);
+
         fs::rename(file_to_move, new_path)
     }
 }
