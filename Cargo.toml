@@ -9,3 +9,5 @@ edition = "2018"
 [dependencies]
 uuid = { version = "0.8", features = ["v4"] } 
 rand = "0.7.3"
+rocket = "0.4.4"
+tempdir = "0.3.7"
