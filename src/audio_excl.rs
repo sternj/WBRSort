@@ -24,7 +24,7 @@ impl FileLister {
             .filter_map(io::Result::ok)
             .map(|s| s.path())
             .choose_multiple(&mut rng, num_items);
-
+        println!("Got items in order {:?}", items);
         return Ok(FileLister {
             files: items,
             lock_acq: HashMap::new(),
@@ -129,20 +129,6 @@ pub fn init_map(
     Ok(ret)
 }
 
-// impl AudioMutex {
-//     fn get_random_file(&mut self, subdir: &str) -> Result<File, io::Error> {
-//         let base_path = Path::new(&self.base_path).join(subdir);
-//         let directory = fs::read_dir(&base_path)?;
-//         let rnd_filename = match directory.choose(&mut self.rng).unwrap() {
-//             Err(e) => return Err(e),
-//             Ok(entry) => entry.path(),
-//         };
-
-//         let opened_file = File::open(base_path.join(rnd_filename))?;
-
-//         return Ok(opened_file)
-//     }
-// }
 #[cfg(test)]
 mod tests {
     use super::*;
