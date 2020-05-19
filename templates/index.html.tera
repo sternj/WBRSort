@@ -10,8 +10,30 @@
         
     </head>
     <body>
-    
-        <h1> Hello World! </h1>
-        <audio controls src= "/file/{{base_dir}}/{{audio_path}}"></audio>
+        <div class="container">
+            {% if flash %}
+                {% if flash_name == "error" %}
+                <div class="alert alert-primary" role="alert">
+                {% else %}
+                <div class="alert alert-success" role="alert">
+                {% endif %}
+                    {{ flash }}
+                </div>
+
+            {% endif %}
+            <h1> Welcome to WBRSorting </h1>
+            <audio controls src= "/file/{{subdir}}/{{audio_path | urlencode}}"></audio>
+            <form action="/submit/{{subdir}}" method="post">
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" name="accept">
+                    <label for="accept" class="form-check-label" checked> This song belongs in automation! </label>
+                </div>
+                <input type="hidden" name="sec" value="{{audio_sec}}">
+                <input type="hidden" name="filename" value="{{audio_path}}">
+                <button type="submit" class="btn btn-primary">Subscribe</button>
+            </form>
+
+        </div>
+        
     </body>
 </html>

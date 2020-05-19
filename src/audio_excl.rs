@@ -2,7 +2,6 @@ use rand;
 use rand::seq::IteratorRandom;
 use std::collections::HashMap;
 use std::fs;
-use std::fs::File;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -89,6 +88,11 @@ impl FileLister {
         file_to_move: PathBuf,
         new_dir: PathBuf,
     ) -> io::Result<()> {
+        println!(
+            "moving {} to {}",
+            file_to_move.to_str().unwrap(),
+            new_dir.to_str().unwrap()
+        );
         let expected_sec = match self.security.get(&file_to_move) {
             None => {
                 return Err(io::Error::new(
@@ -104,15 +108,11 @@ impl FileLister {
                 "security string mismatch",
             ));
         }
-        let new_path = new_dir.join(
-            file_to_move
-                .file_name()
-                .expect("file name should not end with .."),
-        );
+
         self.lock_acq.remove(&file_to_move);
         self.security.remove(&file_to_move);
 
-        fs::rename(file_to_move, new_path)
+        fs::rename(file_to_move, new_dir)
     }
 }
 
@@ -132,8 +132,8 @@ pub fn init_map(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use tempdir::TempDir;
-
     #[test]
     fn test_lock_one() -> Result<(), io::Error> {
         let tmp_dir = TempDir::new("testing")?;
