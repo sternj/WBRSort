@@ -1,13 +1,12 @@
-use rand;
-use rand::seq::IteratorRandom;
 use std::collections::HashMap;
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
+use std::{fs, io};
+
+use rand::{self, seq::SliceRandom};
 use uuid::Uuid;
 
+#[derive(Default)]
 pub struct FileLister {
     files: Vec<PathBuf>,
     lock_acq: HashMap<PathBuf, SystemTime>,
@@ -16,70 +15,66 @@ pub struct FileLister {
 }
 
 impl FileLister {
-    pub fn new<T: AsRef<Path>>(path: T, timeout: &Duration) -> io::Result<FileLister> {
-        let mut rng = rand::thread_rng();
-        let num_items = fs::read_dir(&path)?.count();
-        let items = fs::read_dir(&path)?
-            .filter_map(io::Result::ok)
+    pub fn new<P: AsRef<Path>>(path: P, timeout: Duration) -> io::Result<FileLister> {
+        let mut files = fs::read_dir(&path)?
+            .filter_map(Result::ok)
             .map(|s| s.path())
-            .choose_multiple(&mut rng, num_items);
-        println!("Got items in order {:?}", items);
-        return Ok(FileLister {
-            files: items,
-            lock_acq: HashMap::new(),
-            security: HashMap::new(),
-            timeout: *timeout,
-        });
+            .collect::<Vec<_>>();
+        files.shuffle(&mut rand::thread_rng());
+        println!("Got items in order {:?}", files);
+        Ok(FileLister {
+            files,
+            timeout,
+            ..Default::default()
+        })
     }
 
-    pub fn clean(&mut self) -> io::Result<()> {
-        let mut add_back: Vec<PathBuf> = vec![];
-        let timeout = self.timeout.clone();
+    pub fn clean(&mut self) {
+        let mut add_back = Vec::new();
+        let timeout = &self.timeout;
         self.lock_acq.retain(|path, modified| {
-            let duration = match SystemTime::now().duration_since(*modified) {
-                Err(_) => return false,
-                Ok(t) => t,
-            };
-            if duration > timeout {
-                add_back.push(path.to_path_buf());
-                false
-            } else {
-                true
-            }
+            SystemTime::now()
+                .duration_since(*modified)
+                .map(|duration| {
+                    if duration > *timeout {
+                        add_back.push(path.to_path_buf());
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .unwrap_or(false)
         });
         self.files.append(&mut add_back);
-        Ok(())
     }
 
     pub fn get_file(&mut self) -> io::Result<(String, String)> {
         // if opening item yields an error, just ditch it
-        let filename = match self.files.pop() {
-            Some(path) => path,
-            None => return Err(io::Error::new(io::ErrorKind::NotFound, "No more files")),
-        };
+        let filename = self
+            .files
+            .pop()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No more files"))?;
         self.lock_acq
             .insert(filename.to_path_buf(), SystemTime::now());
         let new_uuid = Uuid::new_v4();
         self.security
             .insert(filename.to_path_buf(), new_uuid.to_string());
-        let name_w_extension = match filename.file_name() {
-            None => {
-                return Err(io::Error::new(
+        filename
+            .file_name()
+            .ok_or_else(|| {
+                io::Error::new(
                     io::ErrorKind::InvalidData,
                     "found a filename ending with ..",
-                ))
-            }
-            Some(p) => match p.to_str() {
-                None => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "Somehow this was invalid?",
-                    ))
-                }
-                Some(q) => q,
-            },
-        };
-        Ok((String::from(name_w_extension), new_uuid.to_string()))
+                )
+            })?
+            .to_str()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Filename {:?} isn't valid UTF-8.", &filename),
+                )
+            })
+            .map(|name_w_extension| (name_w_extension.into(), new_uuid.to_string()))
     }
 
     pub fn move_file_and_remove(
@@ -88,31 +83,24 @@ impl FileLister {
         file_to_move: PathBuf,
         new_dir: PathBuf,
     ) -> io::Result<()> {
-        println!(
-            "moving {} to {}",
-            file_to_move.to_str().unwrap(),
-            new_dir.to_str().unwrap()
-        );
-        let expected_sec = match self.security.get(&file_to_move) {
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "No such file found",
-                ))
-            }
-            Some(sec) => sec,
-        };
+        println!("moving {:?} to {:?}", file_to_move, new_dir);
+
+        let expected_sec = self
+            .security
+            .get(&file_to_move)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "No such file found"))?;
+
         if expected_sec != sec_string {
-            return Err(io::Error::new(
+            Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "security string mismatch",
-            ));
+            ))
+        } else {
+            self.lock_acq.remove(&file_to_move);
+            self.security.remove(&file_to_move);
+
+            fs::rename(file_to_move, new_dir)
         }
-
-        self.lock_acq.remove(&file_to_move);
-        self.security.remove(&file_to_move);
-
-        fs::rename(file_to_move, new_dir)
     }
 }
 
@@ -121,24 +109,24 @@ pub fn init_map(
     subdirs: Vec<String>,
     timeout: Duration,
 ) -> io::Result<HashMap<String, FileLister>> {
-    let mut ret: HashMap<String, FileLister> = HashMap::new();
-    for subdir in subdirs {
-        let lister = FileLister::new(base_dir.join(&subdir), &timeout)?;
-        ret.insert(subdir, lister);
-    }
-    Ok(ret)
+    subdirs
+        .into_iter()
+        .map(|subdir| (base_dir.join(&subdir), subdir))
+        .map(|(resolved_subdir, subdir)| Ok((subdir, FileLister::new(resolved_subdir, timeout)?)))
+        .collect()
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
     use std::fs::File;
     use tempdir::TempDir;
+
     #[test]
     fn test_lock_one() -> Result<(), io::Error> {
         let tmp_dir = TempDir::new("testing")?;
         let _file = File::create(tmp_dir.path().join("x"))?;
-        let mut lister = FileLister::new(&tmp_dir, &Duration::from_secs(5))?;
+        let mut lister = FileLister::new(&tmp_dir, Duration::from_secs(5))?;
 
         let (name, _): (String, String) = lister.get_file()?;
         assert_eq!(name, "x");
@@ -150,11 +138,11 @@ mod tests {
     fn test_cleanup() -> Result<(), io::Error> {
         let tmp_dir = TempDir::new("testing")?;
         let _file = File::create(tmp_dir.path().join("x"))?;
-        let mut lister = FileLister::new(&tmp_dir, &Duration::from_secs(2))?;
+        let mut lister = FileLister::new(&tmp_dir, Duration::from_secs(2))?;
         let (name, _): (String, String) = lister.get_file()?;
         assert_eq!(name, "x");
         std::thread::sleep(Duration::from_secs(3));
-        lister.clean()?;
+        lister.clean();
         let (name, _): (String, String) = lister.get_file()?;
         assert_eq!(name, "x");
         Ok(())
