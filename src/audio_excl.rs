@@ -23,7 +23,6 @@ impl FileLister {
             .filter_map(io::Result::ok)
             .map(|s| s.path())
             .choose_multiple(&mut rng, num_items);
-        println!("Got items in order {:?}", items);
         return Ok(FileLister {
             files: items,
             lock_acq: HashMap::new(),

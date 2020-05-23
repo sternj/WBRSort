@@ -23,6 +23,8 @@ use audio_excl::{init_map, FileLister};
 
 struct AudioMX {
     mp: Mutex<HashMap<String, FileLister>>,
+    base_dir: String,
+    dest_dir: String,
 }
 
 #[derive(Serialize)]
@@ -38,8 +40,8 @@ struct AudioSubm {
     sec: String,
 }
 
-static GLOBAL_BASE: &str = "/home/sam/moods";
-static GLOBAL_DEST: &str = "/home/sam/moods-dest";
+// static GLOBAL_BASE: &str = "/home/sam/moods";
+// static GLOBAL_DEST: &str = "/home/sam/moods-dest";
 
 #[get("/")]
 fn index(audio_mx: State<AudioMX>, flash: Option<FlashMessage>) -> Template {
@@ -127,10 +129,10 @@ fn post_judgement(
     let dest_dir = if accept { &subdir } else { "reject" };
     match lister.move_file_and_remove(
         &form.sec,
-        PathBuf::from(GLOBAL_BASE)
+        PathBuf::from(&audio_mx.base_dir)
             .join(&subdir)
             .join(&form.filename),
-        PathBuf::from(GLOBAL_DEST)
+        PathBuf::from(&audio_mx.dest_dir)
             .join(&dest_dir)
             .join(&form.filename),
     ) {
@@ -150,13 +152,18 @@ fn post_judgement(
 }
 
 #[get("/file/<subdir>/<name..>")]
-fn get_file(subdir: String, name: PathBuf) -> Option<NamedFile> {
-    NamedFile::open(Path::new(&GLOBAL_BASE).join(subdir).join(name)).ok()
+fn get_file(subdir: String, name: PathBuf, audio_mx: State<AudioMX>) -> Option<NamedFile> {
+    NamedFile::open(Path::new(&audio_mx.base_dir).join(subdir).join(name)).ok()
 }
 
-fn setup(subdirs: Vec<String>, timeout_mins: u64) -> io::Result<rocket::Rocket> {
+fn setup(
+    subdirs: Vec<String>,
+    base: &str,
+    dest: &str,
+    timeout_mins: u64,
+) -> io::Result<rocket::Rocket> {
     let mp = init_map(
-        PathBuf::from(&GLOBAL_BASE),
+        PathBuf::from(base),
         subdirs,
         Duration::from_secs(timeout_mins * 60),
     )?;
@@ -166,10 +173,15 @@ fn setup(subdirs: Vec<String>, timeout_mins: u64) -> io::Result<rocket::Rocket> 
             routes![categorize_genre, get_file, post_judgement, index],
         )
         .attach(Template::fairing())
-        .manage(AudioMX { mp: Mutex::new(mp) }));
+        .manage(AudioMX {
+            mp: Mutex::new(mp),
+            base_dir: base.to_string(),
+            dest_dir: dest.to_string(),
+        }));
 }
 
 fn vec_of_subdirs(src_path: &PathBuf, dest_path: &PathBuf) -> io::Result<Vec<String>> {
+    println!("reading folders from {:?}", src_path);
     let folder_names: Vec<String> = fs::read_dir(src_path)?
         .filter_map(io::Result::ok)
         .filter_map(|d| match d.file_type().ok() {
@@ -185,16 +197,19 @@ fn vec_of_subdirs(src_path: &PathBuf, dest_path: &PathBuf) -> io::Result<Vec<Str
         .collect();
 
     for name in &folder_names {
+        println!("Trying to create {:?}", dest_path.join(&name));
         match fs::create_dir(dest_path.join(&name)) {
             Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
             _ => (),
         }
         println!("{}", name);
     }
+    println!("trying to create {:?}", dest_path.join("reject"));
     match fs::create_dir(dest_path.join("reject")) {
         Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
         _ => (),
     }
+    println!("created");
     Ok(folder_names)
 }
 fn main() -> io::Result<()> {
@@ -202,7 +217,7 @@ fn main() -> io::Result<()> {
     let src = &args[1];
     let dest = &args[2];
     match vec_of_subdirs(&PathBuf::from(&src), &PathBuf::from(&dest)) {
-        Ok(v) => setup(v, 5)?.launch(),
+        Ok(v) => setup(v, src, dest, 5)?.launch(),
         Err(e) => return Err(e),
     };
     // setup(vec![String::from("mouth")], 5)?.launch();
