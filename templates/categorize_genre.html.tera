@@ -1,0 +1,22 @@
+{% extends "base" %}
+
+{% block content %}
+{% if flash %}
+    {% if flash_name == "error" %}
+        <div class="alert alert-primary" role="alert">
+        {% else %}
+        <div class="alert alert-success" role="alert">
+        {% endif %}
+            {{ flash }}
+        </div>
+{% endif %}
+
+    <h1> Welcome to WBRSorting </h1>
+    <audio controls src= "/file/{{subdir | urlencode}}/{{audio_path | urlencode}}"></audio>
+    <form action="/submit/{{subdir}}" method="post">
+        <input type="hidden" name="sec" value="{{audio_sec}}">
+        <input type="hidden" name="filename" value="{{audio_path}}">
+        <button type="submit" class="btn btn-primary" formaction='/submit/{{subdir}}?accept=true'>Accept</button>
+        <button type="submit" class="btn btn-primary" formaction='/submit/{{subdir}}?accept=false'>Reject</button>
+    </form>
+{% endblock content %}

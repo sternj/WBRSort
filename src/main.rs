@@ -2,7 +2,6 @@
 
 #[macro_use]
 extern crate rocket;
-use rocket::http::Status;
 use rocket::request::FlashMessage;
 use rocket::request::Form;
 use rocket::response::Flash;
@@ -10,7 +9,9 @@ use rocket::response::NamedFile;
 use rocket::response::Redirect;
 use rocket::State;
 use rocket_contrib::templates::Template;
+use serde::Serialize;
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -24,9 +25,15 @@ struct AudioMX {
     mp: Mutex<HashMap<String, FileLister>>,
 }
 
+#[derive(Serialize)]
+struct IndexCtx {
+    dirs: Vec<String>,
+    flash: Option<String>,
+    flash_name: Option<String>,
+}
+
 #[derive(FromForm)]
 struct AudioSubm {
-    accept: bool,
     filename: String,
     sec: String,
 }
@@ -34,12 +41,35 @@ struct AudioSubm {
 static GLOBAL_BASE: &str = "/home/sam/moods";
 static GLOBAL_DEST: &str = "/home/sam/moods-dest";
 
+#[get("/")]
+fn index(audio_mx: State<AudioMX>, flash: Option<FlashMessage>) -> Template {
+    let mp = audio_mx.mp.lock().expect("locking");
+    let dirs_vec = mp.keys().map(|x| x.to_string()).collect::<Vec<String>>();
+    match flash {
+        Some(m) => Template::render(
+            "index",
+            IndexCtx {
+                dirs: dirs_vec,
+                flash: Some(m.msg().to_string()),
+                flash_name: Some(m.name().to_string()),
+            },
+        ),
+        None => Template::render(
+            "index",
+            IndexCtx {
+                dirs: dirs_vec,
+                flash: None,
+                flash_name: None,
+            },
+        ),
+    }
+}
 #[get("/<subdir>")]
-fn index(
+fn categorize_genre(
     subdir: String,
     audio_mx: State<AudioMX>,
     flash: Option<FlashMessage>,
-) -> Result<Template, Status> {
+) -> Result<Template, Flash<Redirect>> {
     let mut context = HashMap::<String, String>::new();
     let mut map = audio_mx.mp.lock().expect("locking");
     if let Some(msg) = flash {
@@ -47,32 +77,40 @@ fn index(
         context.insert("flash".to_string(), msg.msg().to_string());
     }
     let lister = match map.get_mut(&subdir) {
-        None => return Err(Status::new(404, "subdir not registered")),
+        None => return Err(Flash::error(Redirect::to(uri![index]), "subdir not found")),
         Some(x) => x,
     };
     match lister.clean() {
         Err(e) => {
             println!("{}", e.to_string());
-            return Err(Status::InternalServerError);
+            return Err(Flash::error(Redirect::to(uri![index]), e.to_string()));
         }
         Ok(_) => (),
     };
     let (filename, sec) = match lister.get_file() {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            map.remove(&subdir);
+            return Err(Flash::error(
+                Redirect::to(uri![index]),
+                "No more files in directory",
+            ));
+        }
         Err(e) => {
             println!("{}", e.to_string());
-            return Err(Status::InternalServerError);
+            return Err(Flash::error(Redirect::to(uri![index]), e.to_string()));
         }
         Ok(x) => x,
     };
     context.insert(String::from("subdir"), String::from(subdir));
     context.insert(String::from("audio_path"), String::from(filename));
     context.insert(String::from("audio_sec"), String::from(sec));
-    Ok(Template::render("index", context))
+    Ok(Template::render("categorize_genre", context))
 }
 
-#[post("/submit/<subdir>", data = "<form>")]
+#[post("/submit/<subdir>?<accept>", data = "<form>")]
 fn post_judgement(
     subdir: String,
+    accept: bool,
     form: Form<AudioSubm>,
     audio_mx: State<AudioMX>,
 ) -> Result<Flash<Redirect>, Flash<Redirect>> {
@@ -80,13 +118,13 @@ fn post_judgement(
     let lister = match map.get_mut(&subdir) {
         None => {
             return Err(Flash::error(
-                Redirect::to(uri![index: subdir]),
+                Redirect::to(uri![categorize_genre: subdir]),
                 "Subdir not registered",
             ))
         }
         Some(x) => x,
     };
-    let dest_dir = if form.accept { &subdir } else { "reject" };
+    let dest_dir = if accept { &subdir } else { "reject" };
     match lister.move_file_and_remove(
         &form.sec,
         PathBuf::from(GLOBAL_BASE)
@@ -99,14 +137,14 @@ fn post_judgement(
         Err(e) => {
             println!("{}", e.to_string());
             return Err(Flash::error(
-                Redirect::to(uri![index: subdir]),
+                Redirect::to(uri![categorize_genre: subdir]),
                 e.to_string(),
             ));
         }
         Ok(_) => (),
     }
     Ok(Flash::success(
-        Redirect::to(uri![index: subdir]),
+        Redirect::to(uri![categorize_genre: subdir]),
         "success!",
     ))
 }
@@ -123,7 +161,10 @@ fn setup(subdirs: Vec<String>, timeout_mins: u64) -> io::Result<rocket::Rocket> 
         Duration::from_secs(timeout_mins * 60),
     )?;
     return Ok(rocket::ignite()
-        .mount("/", routes![index, get_file, post_judgement])
+        .mount(
+            "/",
+            routes![categorize_genre, get_file, post_judgement, index],
+        )
         .attach(Template::fairing())
         .manage(AudioMX { mp: Mutex::new(mp) }));
 }
@@ -135,6 +176,10 @@ fn vec_of_subdirs(src_path: &PathBuf, dest_path: &PathBuf) -> io::Result<Vec<Str
             None => None,
             Some(x) if x.is_dir() => Some(d),
             _ => None,
+        })
+        .filter(|x| match fs::read_dir(x.path()) {
+            Ok(o) => o.count() > 0,
+            Err(_) => false,
         })
         .filter_map(|x| x.file_name().into_string().ok())
         .collect();
@@ -153,6 +198,13 @@ fn vec_of_subdirs(src_path: &PathBuf, dest_path: &PathBuf) -> io::Result<Vec<Str
     Ok(folder_names)
 }
 fn main() -> io::Result<()> {
-    setup(vec![String::from("mouth")], 5)?.launch();
+    let args: Vec<String> = env::args().collect();
+    let src = &args[1];
+    let dest = &args[2];
+    match vec_of_subdirs(&PathBuf::from(&src), &PathBuf::from(&dest)) {
+        Ok(v) => setup(v, 5)?.launch(),
+        Err(e) => return Err(e),
+    };
+    // setup(vec![String::from("mouth")], 5)?.launch();
     Ok(())
 }

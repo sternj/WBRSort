@@ -1,39 +1,20 @@
-<!doctype html>
-<html>
-    <head>
-        <meta name="viewport" 
-            content="width=device-width, initial-scale=1">
-        <link rel="stylesheet" 
-            href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css" 
-                integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" 
-                crossorigin="anonymous">
-        
-    </head>
-    <body>
-        <div class="container">
-            {% if flash %}
-                {% if flash_name == "error" %}
-                <div class="alert alert-primary" role="alert">
-                {% else %}
-                <div class="alert alert-success" role="alert">
-                {% endif %}
-                    {{ flash }}
-                </div>
+{% extends "base" %}
 
-            {% endif %}
-            <h1> Welcome to WBRSorting </h1>
-            <audio controls src= "/file/{{subdir}}/{{audio_path | urlencode}}"></audio>
-            <form action="/submit/{{subdir}}" method="post">
-                <div class="form-check">
-                    <input type="checkbox" class="form-check-input" name="accept">
-                    <label for="accept" class="form-check-label" checked> This song belongs in automation! </label>
-                </div>
-                <input type="hidden" name="sec" value="{{audio_sec}}">
-                <input type="hidden" name="filename" value="{{audio_path}}">
-                <button type="submit" class="btn btn-primary">Subscribe</button>
-            </form>
-
+{% block content %}
+{% if flash %}
+    {% if flash_name == "error" %}
+        <div class="alert alert-primary" role="alert">
+        {% else %}
+        <div class="alert alert-success" role="alert">
+        {% endif %}
+            {{ flash }}
         </div>
-        
-    </body>
-</html>
+{% endif %}
+<ul>
+    {% for item in dirs %}
+        <li>
+            <a href="/{{item}}">{{item}}</a>
+        </li>
+    {% endfor %}
+</ul>
+{% endblock content %}
