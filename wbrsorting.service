@@ -8,7 +8,9 @@ Type=simple
 Restart=always
 RestartSec=1
 User=root
+Environment=ROCKET_PORT=8001
 ExecStart=/home/sam/wbrsorting/target/release/wbrsorting /mnt/drobo/AutomationToCategorize /mnt/drobo/AutomationDest
+WorkingDirectory=/home/sam/wbrsorting
 
 [Install]
 WantedBy=multi-user.target

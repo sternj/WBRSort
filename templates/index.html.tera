@@ -1,6 +1,17 @@
 {% extends "base" %}
 
 {% block content %}
+
+
+    <div class="jumbotron text-center">
+        <h1> Welcome to WBRSorting</h1>
+    </div>
+    <div class="text-center">
+        Thank you for contributing to the WBRS automation!
+        Below you will see the genres that still need categorization.
+        If you run out of songs in one category, WBRSorter will bring you 
+        back here. 
+    </div>
 {% if flash %}
     {% if flash_name == "error" %}
         <div class="alert alert-primary" role="alert">
