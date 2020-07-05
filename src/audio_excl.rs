@@ -113,6 +113,10 @@ impl FileLister {
 
         fs::rename(file_to_move, new_dir)
     }
+
+    pub fn count_files(&self) -> usize {
+        self.files.len()
+    }
 }
 
 pub fn init_map(
